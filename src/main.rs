@@ -1,10 +1,17 @@
 // main.rs
-use chrono::{Datelike, NaiveDate, DateTime, Local};
+use chrono::{Datelike, NaiveDate, DateTime, Local, Duration, Timelike};
 use clap::Parser;
 use regex::Regex;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    io::{self, Write},
+    path::PathBuf,
+};
 use std::path::Path;
 use walkdir::WalkDir;
+use encoding_rs::{SHIFT_JIS, UTF_16LE};
+use encoding_rs_rw::EncodingWriter;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -15,6 +22,10 @@ struct Args {
     /// Optional date list (e.g., 2024-12-01,2025-01-01)
     #[arg(short, long)]
     dates: Option<String>,
+
+    /// Output encoding for CSV: "utf8", "shift_jis", or "utf16le". Default is utf8.
+    #[arg(short, long)]
+    encoding: Option<String>,
 }
 
 #[derive(Debug)]
@@ -145,7 +156,7 @@ fn extract_dates_from_template(template: &str) -> Vec<NaiveDate> {
     dates
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let args = Args::parse();
 
     let dates: Vec<NaiveDate> = if let Some(date_str) = args.dates {
@@ -171,10 +182,41 @@ fn main() {
         }
     }
 
-    println!("normalized_name,date,actual_name,size,created,modified");
+    let enc_label = args.encoding
+        .as_deref()
+        .unwrap_or("utf8")
+        .to_lowercase();
+
+    let mut writer: Box<dyn Write> = match enc_label.as_str() {
+        "shift_jis" => {
+            // SHIFT_JIS encoding
+            let stdout = io::stdout();
+            let handle = stdout.lock();
+            Box::new(EncodingWriter::new(handle, SHIFT_JIS.new_encoder()))
+        }
+        "utf16le" => {
+            // UTF-16LE encoding
+            let encoder = UTF_16LE.new_encoder();
+            let stdout = io::stdout();
+            let handle = stdout.lock();
+            Box::new(EncodingWriter::new(handle, encoder))
+        }
+        _ => {
+            // UTF-8 (no wrapper)
+            let stdout = io::stdout();
+            Box::new(stdout.lock())
+        }
+    };
+
+    writeln!(
+        writer,
+        "normalized_name,date,actual_name,size,created,modified"
+    )?;
+
     for (norm_name, infos) in all {
         for info in infos {
-            println!(
+            writeln!(
+                writer,
                 "{},{},{},{},{},{}",
                 norm_name,
                 info.date_str,
@@ -182,7 +224,10 @@ fn main() {
                 info.size,
                 info.created,
                 info.modified
-            );
+            )?;
         }
     }
+    writer.flush()?;
+    Ok(())
+
 }

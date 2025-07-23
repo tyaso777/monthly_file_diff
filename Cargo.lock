@@ -170,6 +170,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
+name = "encoding_rs_rw"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "597f4ee99dceffde445d4c238343d4c54f7c701db102538e91674a1fbfdf930f"
+dependencies = [
+ "encoding_rs",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -239,6 +257,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "encoding_rs",
+ "encoding_rs_rw",
  "regex",
  "walkdir",
 ]
