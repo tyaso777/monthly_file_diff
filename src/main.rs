@@ -1,5 +1,5 @@
 // main.rs
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, DateTime, Local};
 use clap::Parser;
 use regex::Regex;
 use std::{collections::HashMap, fs, path::PathBuf};
@@ -23,6 +23,7 @@ struct FileInfo {
     size: u64,
     created: String,
     date_str: String,
+    modified: String,
 }
 
 fn resolve_template(path_template: &str, date: NaiveDate) -> PathBuf {
@@ -59,9 +60,30 @@ fn collect_files(path: &PathBuf, date: NaiveDate) -> HashMap<String, FileInfo> {
         let size = meta.len();
         let created = meta
             .created()
-            .map(|t| format!("{:?}", t))
+            .map(|t| {
+                // Convert SystemTime to a local DateTime
+                let mut dt: DateTime<Local> = DateTime::from(t);
+                // Explorer-style rounding: if seconds >= 30, round up the minute
+                if dt.second() >= 30 {
+                    dt = dt + Duration::minutes(1);
+                }
+                // Format as "YYYY/MM/DD HH:MM"
+                dt.format("%Y/%m/%d %H:%M").to_string()
+            })
             .unwrap_or_else(|_| "N/A".into());
-
+        let modified = meta
+            .modified()
+            .map(|t| {
+                // Convert SystemTime to a local DateTime
+                let mut dt: DateTime<Local> = DateTime::from(t);
+                // Explorer-style rounding: if seconds >= 30, round up the minute
+                if dt.second() >= 30 {
+                    dt = dt + Duration::minutes(1);
+                }
+                // Format as "YYYY/MM/DD HH:MM"
+                dt.format("%Y/%m/%d %H:%M").to_string()
+            })
+            .unwrap_or_else(|_| "N/A".into());
         let file_name = entry.file_name().to_string_lossy().to_string();
         let normalized = normalize_filename(&file_name, date.year(), date.month());
 
@@ -71,6 +93,7 @@ fn collect_files(path: &PathBuf, date: NaiveDate) -> HashMap<String, FileInfo> {
                 actual_name: file_name,
                 size,
                 created,
+                modified,
                 date_str: date.format("%Y-%m").to_string(),
             },
         );
@@ -148,10 +171,18 @@ fn main() {
         }
     }
 
-    println!("normalized_name,date,actual_name,size,created");
+    println!("normalized_name,date,actual_name,size,created,modified");
     for (norm_name, infos) in all {
         for info in infos {
-            println!("{},{},{},{},{}", norm_name, info.date_str, info.actual_name, info.size, info.created);
+            println!(
+                "{},{},{},{},{},{}",
+                norm_name,
+                info.date_str,
+                info.actual_name,
+                info.size,
+                info.created,
+                info.modified
+            );
         }
     }
 }
