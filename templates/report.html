@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }}</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <style>
+    body { font-family: sans-serif; padding: 2em; }
+    h2 { margin-top: 2em; }
+    .row { display: flex; gap: 2em; margin-bottom: 4em; }
+    canvas { max-width: 480px; height: 300px; }
+  </style>
+</head>
+<body>
+<h1>{{ title }}</h1>
+
+{% for file in files %}
+  <h2>{{ file.name }}</h2>
+  <div class="row">
+    <canvas id="chart_size_{{ file.id }}"></canvas>
+    <canvas id="chart_time_{{ file.id }}"></canvas>
+  </div>
+  <script>
+  new Chart(document.getElementById("chart_size_{{ file.id }}").getContext("2d"), {
+    type: "line",
+    data: {
+      labels: {{ file.dates_json | safe }},
+      datasets: [{
+        label: "size",
+        data: {{ file.sizes_json | safe }},
+        borderColor: "blue",
+        fill: false
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { title: { display: true, text: "Size" } },
+      scales: {
+        x: { title: { display: true, text: "Date" } },
+        y: { title: { display: true, text: "Size" } }
+      }
+    }
+  });
+
+  new Chart(document.getElementById("chart_time_{{ file.id }}").getContext("2d"), {
+    type: "line",
+    data: {
+      labels: {{ file.dates_json | safe }},
+      datasets: [
+        {
+          label: "created",
+          data: {{ file.created_json | safe }},
+          borderColor: "green",
+          borderDash: [4, 2],
+          pointStyle: "circle",
+          pointRadius: 5,
+          fill: false
+        },
+        {
+          label: "modified",
+          data: {{ file.modified_json | safe }},
+          borderColor: "orange",
+          borderDash: [],
+          pointStyle: "triangle",
+          pointRadius: 5,
+          fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { title: { display: true, text: "Created / Modified (datetime JST)" } },
+      scales: {
+        x: { title: { display: true, text: "Date" } },
+        y: {
+          type: "time",
+          time: {
+            unit: "day",
+            tooltipFormat: "yyyy-MM-dd HH:mm:ss",
+            displayFormats: { day: "yyyy-MM-dd" }
+          },
+          title: { display: true, text: "Datetime (JST)" }
+        }
+      }
+    }
+  });
+  </script>
+{% endfor %}
+
+</body>
+</html>

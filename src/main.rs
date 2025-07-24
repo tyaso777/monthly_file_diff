@@ -5,14 +5,16 @@ use regex::Regex;
 use std::{
     collections::{HashMap, BTreeMap},
     fs,
-    fs::File,
-    io::{self, Write, BufWriter},
-    path::PathBuf,
+    io,
+    path::{PathBuf, Path},
 };
-use std::path::Path;
 use walkdir::WalkDir;
 use encoding_rs::{SHIFT_JIS, UTF_16LE};
 use encoding_rs_rw::EncodingWriter;
+
+use serde::Serialize;
+use serde_json::to_string as to_json;
+use tera::{Context, Tera};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -36,6 +38,16 @@ struct FileInfo {
     created: String,
     date_str: String,
     modified: String,
+}
+
+#[derive(Serialize)]
+struct ChartFile {
+    name: String,
+    id: String,
+    dates_json: String,
+    sizes_json: String,
+    created_json: String,
+    modified_json: String,
 }
 
 fn resolve_template(path_template: &str, date: NaiveDate) -> PathBuf {
@@ -167,130 +179,61 @@ fn datetime_str_to_iso8601_jst(s: &str) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-/// Write a full HTML report of file data
-fn write_html_report<W: Write>(
-    writer: &mut W,
-    grouped: &std::collections::BTreeMap<String, Vec<FileInfo>>,
-) -> std::io::Result<()> {
-    fn write_chart_script<W: Write>(
-        w: &mut W,
-        id_safe: &str,
-        dates: &[String],
-        sizes: &[String],
-        created_ts: &[String],
-        modified_ts: &[String],
-    ) -> std::io::Result<()> {
-        writeln!(
-            w,
-            r#"<h2>{}</h2>
-<div class="row">
-<canvas id="chart_size_{0}"></canvas>
-<canvas id="chart_time_{0}"></canvas>
-</div>
-<script>
-new Chart(document.getElementById("chart_size_{0}").getContext("2d"), {{
-  type: "line",
-  data: {{
-    labels: {:?},
-    datasets: [{{
-      label: "size",
-      data: {:?},
-      borderColor: "blue",
-      fill: false
-    }}]
-  }},
-  options: {{
-    responsive: true,
-    plugins: {{ title: {{ display: true, text: "Size" }} }},
-    scales: {{
-      x: {{ title: {{ display: true, text: "Date" }} }},
-      y: {{ title: {{ display: true, text: "Size" }} }}
-    }}
-  }}
-}});
-new Chart(document.getElementById("chart_time_{0}").getContext("2d"), {{
-  type: "line",
-  data: {{
-    labels: {:?},
-    datasets: [
-      {{
-        label: "created",
-        data: {:?},
-        borderColor: "green",
-        borderDash: [4, 2],
-        pointStyle: "circle",
-        pointRadius: 5,
-        fill: false
-      }},
-      {{
-        label: "modified",
-        data: {:?},
-        borderColor: "orange",
-        borderDash: [],
-        pointStyle: "triangle",
-        pointRadius: 5,
-        fill: false
-      }}
-    ]
-  }},
-  options: {{
-    responsive: true,
-    plugins: {{ title: {{ display: true, text: "Created / Modified (datetime JST)" }} }},
-    scales: {{
-      x: {{ title: {{ display: true, text: "Date" }} }},
-      y: {{
-        type: "time",
-        time: {{
-          unit: "day",
-          tooltipFormat: "yyyy-MM-dd HH:mm:ss",
-          displayFormats: {{ day: "yyyy-MM-dd" }}
-        }},
-        title: {{ display: true, text: "Datetime (JST)" }}
-      }}
-    }}
-  }}
-}});
-</script>"#,
-            id_safe, dates, sizes, dates, created_ts, modified_ts
-        )
-    }
+fn write_html_report_with_tera(
+    out_path: &Path,
+    grouped: &BTreeMap<String, Vec<FileInfo>>,
+) -> io::Result<()> {
+    // Build view-model for Tera
+    let files: Vec<ChartFile> = grouped
+        .iter()
+        .map(|(name, infos)| {
+            let dates: Vec<String> = infos.iter().map(|i| i.date_str.clone()).collect();
+            let sizes: Vec<u64> = infos.iter().map(|i| i.size).collect();
+            let created: Vec<String> = infos
+                .iter()
+                .map(|i| datetime_str_to_iso8601_jst(&i.created))
+                .collect();
+            let modified: Vec<String> = infos
+                .iter()
+                .map(|i| datetime_str_to_iso8601_jst(&i.modified))
+                .collect();
 
-    writeln!(
-        writer,
-        r#"<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>File Info Report</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-  <style>
-    body {{ font-family: sans-serif; padding: 2em; }}
-    h2 {{ margin-top: 2em; }}
-    .row {{ display: flex; gap: 2em; margin-bottom: 4em; }}
-    canvas {{ max-width: 480px; height: 300px; }}
-  </style>
-</head>
-<body>
-<h1>File Info Charts</h1>"#
-    )?;
+            // Prepare JSON strings to embed "as is" in JS code.
+            let dates_json = to_json(&dates).unwrap();
+            let sizes_json = to_json(&sizes).unwrap();
+            let created_json = to_json(&created).unwrap();
+            let modified_json = to_json(&modified).unwrap();
 
-    for (name, infos) in grouped {
-        let dates: Vec<String> = infos.iter().map(|i| i.date_str.clone()).collect();
-        let sizes: Vec<String> = infos.iter().map(|i| i.size.to_string()).collect();
-        let created_ts: Vec<String> =
-            infos.iter().map(|i| datetime_str_to_iso8601_jst(&i.created)).collect();
-        let modified_ts: Vec<String> =
-            infos.iter().map(|i| datetime_str_to_iso8601_jst(&i.modified)).collect();
-        let id_safe = name.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+            let id = name.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
 
-        write_chart_script(writer, &id_safe, &dates, &sizes, &created_ts, &modified_ts)?;
-    }
+            ChartFile {
+                name: name.clone(),
+                id,
+                dates_json,
+                sizes_json,
+                created_json,
+                modified_json,
+            }
+        })
+        .collect();
 
-    writeln!(writer, "</body></html>")?;
-    Ok(())
+    // Load template(s)
+    let tera = Tera::new("templates/**/*.html")
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+    // Build context
+    let mut ctx = Context::new();
+    ctx.insert("title", "File Info Charts");
+    ctx.insert("files", &files);
+
+    // Render
+    let rendered = tera
+        .render("report.html", &ctx)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+    // Write out
+    fs::write(out_path, rendered)
 }
-
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
@@ -365,17 +308,13 @@ fn main() -> io::Result<()> {
     }
     writer.flush()?;
 
-    // let html_path = PathBuf::from("output.html");
-    // write_html_report(&all, &html_path)?;
-
     use std::io::Write;
-    let html_path = PathBuf::from("output.html");
     // Convert HashMap -> BTreeMap to get stable ordering in HTML
     let grouped: BTreeMap<String, Vec<FileInfo>> =
         all.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let mut html_writer = BufWriter::new(File::create(&html_path)?);
-    write_html_report(&mut html_writer, &grouped)?;
-    html_writer.flush()?;
+
+    let html_path = PathBuf::from("output.html");
+    write_html_report_with_tera(&html_path, &grouped)?;
 
     Ok(())
 
