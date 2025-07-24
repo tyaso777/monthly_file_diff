@@ -1,11 +1,12 @@
 // main.rs
-use chrono::{Datelike, NaiveDate, DateTime, Local, Duration, Timelike};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, DateTime, Local, Duration, Timelike};
 use clap::Parser;
 use regex::Regex;
 use std::{
     collections::HashMap,
     fs,
-    io::{self, Write},
+    fs::File,
+    io::{self, Write, BufWriter},
     path::PathBuf,
 };
 use std::path::Path;
@@ -28,7 +29,7 @@ struct Args {
     encoding: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FileInfo {
     actual_name: String,
     size: u64,
@@ -156,6 +157,135 @@ fn extract_dates_from_template(template: &str) -> Vec<NaiveDate> {
     dates
 }
 
+fn parse_datetime_to_timestamp(s: &str) -> i64 {
+    NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M")
+        .map(|dt| dt.and_utc().timestamp())
+        .unwrap_or(0)
+}
+
+fn write_html_report(all: &HashMap<String, Vec<FileInfo>>, out_path: &Path) -> io::Result<()> {
+    let file = File::create(out_path)?;
+    let mut writer = BufWriter::new(file);
+
+    writeln!(writer, r#"
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>File Info Report</title>
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+      <style>
+        body {{ font-family: sans-serif; padding: 2em; }}
+        h2 {{ margin-top: 2em; }}
+        .row {{ display: flex; gap: 2em; margin-bottom: 4em; }}
+        canvas {{ max-width: 480px; height: 300px; }}
+      </style>
+    </head>
+    <body>
+    <h1>File Info Charts</h1>
+    "#)?;
+
+    for (norm_name, infos) in all {
+        let mut infos = infos.clone();
+        infos.sort_by_key(|i| i.date_str.clone());
+
+        let dates: Vec<String> = infos.iter().map(|i| i.date_str.clone()).collect();
+        let sizes: Vec<String> = infos.iter().map(|i| i.size.to_string()).collect();
+        let created_ts: Vec<String> = infos.iter()
+            .map(|i| parse_datetime_to_timestamp(&i.created).to_string())
+            .collect();
+        let modified_ts: Vec<String> = infos.iter()
+            .map(|i| parse_datetime_to_timestamp(&i.modified).to_string())
+            .collect();
+
+        let safe_id = norm_name.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+
+        let size_id = format!("chart_size_{}", safe_id);
+        let time_id = format!("chart_time_{}", safe_id);
+
+        writeln!(writer, r#"<h2>{}</h2>"#, norm_name)?;
+        writeln!(writer, r#"<div class="row">"#)?;
+        writeln!(writer, r#"<canvas id="{}"></canvas>"#, size_id)?;
+        writeln!(writer, r#"<canvas id="{}"></canvas>"#, time_id)?;
+        writeln!(writer, r#"</div>"#)?;
+
+        // Size chart
+        writeln!(writer, r#"<script>
+new Chart(document.getElementById("{size_id}").getContext("2d"), {{
+  type: "line",
+  data: {{
+    labels: {labels:?},
+    datasets: [
+      {{
+        label: "size",
+        data: {size:?},
+        borderColor: "blue",
+        fill: false
+      }}
+    ]
+  }},
+  options: {{
+    responsive: true,
+    plugins: {{ title: {{ display: true, text: "Size" }} }},
+    scales: {{
+      x: {{ title: {{ display: true, text: "Date" }} }},
+      y: {{ title: {{ display: true, text: "Size" }} }}
+    }}
+  }}
+}});
+"#,
+        size_id = size_id,
+        labels = dates,
+        size = sizes)?;
+
+        // Time chart with style distinction
+        writeln!(writer, r#"
+new Chart(document.getElementById("{time_id}").getContext("2d"), {{
+  type: "line",
+  data: {{
+    labels: {labels:?},
+    datasets: [
+      {{
+        label: "created",
+        data: {created:?},
+        borderColor: "green",
+        borderDash: [4, 2],
+        pointStyle: "circle",
+        pointRadius: 5,
+        fill: false
+      }},
+      {{
+        label: "modified",
+        data: {modified:?},
+        borderColor: "orange",
+        borderDash: [],
+        pointStyle: "triangle",
+        pointRadius: 5,
+        fill: false
+      }}
+    ]
+  }},
+  options: {{
+    responsive: true,
+    plugins: {{ title: {{ display: true, text: "Created / Modified (timestamp)" }} }},
+    scales: {{
+      x: {{ title: {{ display: true, text: "Date" }} }},
+      y: {{ title: {{ display: true, text: "Unix Timestamp" }} }}
+    }}
+  }}
+}});
+</script>"#,
+        time_id = time_id,
+        labels = dates,
+        created = created_ts,
+        modified = modified_ts)?;
+    }
+
+    writeln!(writer, "</body></html>")?;
+    Ok(())
+}
+
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
@@ -213,7 +343,7 @@ fn main() -> io::Result<()> {
         "normalized_name,date,actual_name,size,created,modified"
     )?;
 
-    for (norm_name, infos) in all {
+    for (norm_name, infos) in &all {
         for info in infos {
             writeln!(
                 writer,
@@ -228,6 +358,10 @@ fn main() -> io::Result<()> {
         }
     }
     writer.flush()?;
+
+    let html_path = PathBuf::from("output.html");
+    write_html_report(&all, &html_path)?;
+
     Ok(())
 
 }
