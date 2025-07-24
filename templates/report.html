@@ -39,6 +39,13 @@
     </div>
   </div>
   <script>
+  const createdData_{{ file.id }} = {{ file.created_json | safe }};
+  const modifiedData_{{ file.id }} = {{ file.modified_json | safe }};
+  const allTimes_{{ file.id }} = createdData_{{ file.id }}.concat(modifiedData_{{ file.id }}).map(ts => new Date(ts).getTime());
+  const timeMin_{{ file.id }} = new Date(Math.min(...allTimes_{{ file.id }}) - 1000 * 60 * 60 * 24);
+  const timeMax_{{ file.id }} = new Date(Math.max(...allTimes_{{ file.id }}) + 1000 * 60 * 60 * 24);
+
+
   new Chart(document.getElementById("chart_size_{{ file.id }}").getContext("2d"), {
     type: "line",
     data: {
@@ -93,12 +100,16 @@
         x: { title: { display: true, text: "Date" } },
         y: {
           type: "time",
+          min: timeMin_{{ file.id }},
+          max: timeMax_{{ file.id }},
           time: {
             unit: "day",
             tooltipFormat: "yyyy-MM-dd HH:mm:ss",
             displayFormats: { day: "yyyy-MM-dd" }
           },
-          title: { display: true, text: "Datetime (JST)" }
+          title: { display: true, text: "Datetime (JST)" },
+          suggestedMin: undefined,
+          suggestedMax: undefined
         }
       }
     }
