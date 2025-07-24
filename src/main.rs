@@ -5,7 +5,7 @@ use regex::Regex;
 use std::{
     collections::{HashMap, BTreeMap},
     fs,
-    io,
+    io::{self, Write},
     path::{PathBuf, Path},
 };
 use walkdir::WalkDir;
@@ -35,9 +35,13 @@ struct Args {
 struct FileInfo {
     actual_name: String,
     size: u64,
-    created: String,
-    date_str: String,
-    modified: String,
+    created: String,      // "YYYY/MM/DD HH:MM"
+    modified: String,     // "YYYY/MM/DD HH:MM"
+    date_str: String,     // "YYYY-MM"
+    /// Path relative to the resolved monthly root (e.g. "Sub/InTheBox08-2024.xlsx")
+    rel_path: String,
+    /// Relative path where yyyy/mm are normalized to {yyyy}/{mm} on the file name part
+    normalized_rel_path: String,
 }
 
 #[derive(Serialize)]
@@ -48,6 +52,8 @@ struct ChartFile {
     sizes_json: String,
     created_json: String,
     modified_json: String,
+    display_path: String,
+    display_file_name: String,
 }
 
 fn resolve_template(path_template: &str, date: NaiveDate) -> PathBuf {
@@ -66,12 +72,28 @@ fn normalize_filename(name: &str, yyyy: i32, mm: u32) -> String {
     with_year.replace(&month_str, "{mm}")
 }
 
-fn collect_files(path: &PathBuf, date: NaiveDate) -> HashMap<String, FileInfo> {
-    let mut map = HashMap::new();
+fn normalize_rel_path(rel_path: &str, yyyy: i32, mm: u32) -> String {
+    // Only normalize the file name part, keep directories as they are
+    let p = Path::new(rel_path);
+    let file = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let normalized_file = normalize_filename(&file, yyyy, mm);
+    if let Some(parent) = p.parent() {
+        if parent.as_os_str().is_empty() {
+            normalized_file
+        } else {
+            format!("{}/{}", parent.to_string_lossy().replace('\\', "/"), normalized_file)
+        }
+    } else {
+        normalized_file
+    }
+}
 
-    for entry in WalkDir::new(path)
+fn collect_files(root: &Path, date: NaiveDate) -> Vec<FileInfo> {
+    let mut out = Vec::new();
+
+    for entry in WalkDir::new(root)
         .min_depth(1)
-        .max_depth(2)
+        .max_depth(64) // allow deeper subdirs if you want
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
@@ -81,70 +103,68 @@ fn collect_files(path: &PathBuf, date: NaiveDate) -> HashMap<String, FileInfo> {
             Err(_) => continue,
         };
 
+        // relative path from root
+        let rel_path = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+
         let size = meta.len();
         let created = meta
             .created()
             .map(|t| {
-                // Convert SystemTime to a local DateTime
                 let mut dt: DateTime<Local> = DateTime::from(t);
-                // Explorer-style rounding: if seconds >= 30, round up the minute
                 if dt.second() >= 30 {
                     dt = dt + Duration::minutes(1);
                 }
-                // Format as "YYYY/MM/DD HH:MM"
                 dt.format("%Y/%m/%d %H:%M").to_string()
             })
             .unwrap_or_else(|_| "N/A".into());
         let modified = meta
             .modified()
             .map(|t| {
-                // Convert SystemTime to a local DateTime
                 let mut dt: DateTime<Local> = DateTime::from(t);
-                // Explorer-style rounding: if seconds >= 30, round up the minute
                 if dt.second() >= 30 {
                     dt = dt + Duration::minutes(1);
                 }
-                // Format as "YYYY/MM/DD HH:MM"
                 dt.format("%Y/%m/%d %H:%M").to_string()
             })
             .unwrap_or_else(|_| "N/A".into());
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        let normalized = normalize_filename(&file_name, date.year(), date.month());
 
-        map.insert(
-            normalized.clone(),
-            FileInfo {
-                actual_name: file_name,
-                size,
-                created,
-                modified,
-                date_str: date.format("%Y-%m").to_string(),
-            },
-        );
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let normalized_rel_path = normalize_rel_path(&rel_path, date.year(), date.month());
+
+        out.push(FileInfo {
+            actual_name: file_name,
+            size,
+            created,
+            modified,
+            date_str: date.format("%Y-%m").to_string(),
+            rel_path,
+            normalized_rel_path,
+        });
     }
 
-    map
+    out
 }
 
 fn extract_dates_from_template(template: &str) -> Vec<NaiveDate> {
-    // Build a PathBuf and locate the directory that contains the date-folders.
     let tpl = PathBuf::from(template);
     let main_dir = tpl.parent().unwrap_or_else(|| Path::new("."));
-    // The parent of "Main" is e.g. "参照{yyyy}_{mm}月データ"; its parent is TestData.
     let base_dir = main_dir.parent().unwrap_or_else(|| Path::new("."));
 
-    // Prepare a folder-name template, e.g. "参照{yyyy}_{mm}月データ".
     let folder_tpl = main_dir
         .file_name()
         .unwrap()
         .to_string_lossy()
         .to_string();
 
-    // Build a regex by escaping the template and replacing placeholders with named groups.
     let mut re_str = regex::escape(&folder_tpl);
     re_str = re_str.replace(r"\{yyyy\}", r"(?P<yyyy>\d{4})");
-    re_str = re_str.replace(r"\{mm\}",   r"(?P<mm>\d+)");
-    re_str = re_str.replace(r"\{dd\}",   r"(?P<dd>\d+)");
+    re_str = re_str.replace(r"\{mm\}", r"(?P<mm>\d+)");
+    re_str = re_str.replace(r"\{dd\}", r"(?P<dd>\d+)");
     let re = Regex::new(&re_str).expect("Invalid regex from template");
 
     let mut dates = Vec::new();
@@ -154,7 +174,7 @@ fn extract_dates_from_template(template: &str) -> Vec<NaiveDate> {
                 if let Some(caps) = re.captures(name) {
                     if let (Some(y), Some(m)) = (
                         caps.name("yyyy").and_then(|m| m.as_str().parse::<i32>().ok()),
-                        caps.name("mm").  and_then(|m| m.as_str().parse::<u32>().ok()),
+                        caps.name("mm").and_then(|m| m.as_str().parse::<u32>().ok()),
                     ) {
                         if let Some(d) = NaiveDate::from_ymd_opt(y, m, 1) {
                             dates.push(d);
@@ -179,14 +199,21 @@ fn datetime_str_to_iso8601_jst(s: &str) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
+fn sanitize_id(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+
 fn write_html_report_with_tera(
     out_path: &Path,
     grouped: &BTreeMap<String, Vec<FileInfo>>,
 ) -> io::Result<()> {
-    // Build view-model for Tera
     let files: Vec<ChartFile> = grouped
         .iter()
-        .map(|(name, infos)| {
+        .map(|(norm_rel_path, infos)| {
+            // time series data
             let dates: Vec<String> = infos.iter().map(|i| i.date_str.clone()).collect();
             let sizes: Vec<u64> = infos.iter().map(|i| i.size).collect();
             let created: Vec<String> = infos
@@ -198,42 +225,44 @@ fn write_html_report_with_tera(
                 .map(|i| datetime_str_to_iso8601_jst(&i.modified))
                 .collect();
 
-            // Prepare JSON strings to embed "as is" in JS code.
-            let dates_json = to_json(&dates).unwrap();
-            let sizes_json = to_json(&sizes).unwrap();
-            let created_json = to_json(&created).unwrap();
-            let modified_json = to_json(&modified).unwrap();
-
-            let id = name.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+            // display: split path & filename from normalized_rel_path
+            let p = Path::new(norm_rel_path);
+            let display_file_name = p
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| norm_rel_path.clone());
+            let display_path = p
+                .parent()
+                .map(|pp| pp.display().to_string().replace('\\', "/"))
+                .unwrap_or_else(|| ".".to_string());
 
             ChartFile {
-                name: name.clone(),
-                id,
-                dates_json,
-                sizes_json,
-                created_json,
-                modified_json,
+                name: norm_rel_path.clone(),
+                id: sanitize_id(norm_rel_path),
+                dates_json: to_json(&dates).unwrap(),
+                sizes_json: to_json(&sizes).unwrap(),
+                created_json: to_json(&created).unwrap(),
+                modified_json: to_json(&modified).unwrap(),
+                display_path,
+                display_file_name,
             }
         })
         .collect();
 
-    // Load template(s)
     let tera = Tera::new("templates/**/*.html")
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
-    // Build context
     let mut ctx = Context::new();
     ctx.insert("title", "File Info Charts");
     ctx.insert("files", &files);
 
-    // Render
     let rendered = tera
         .render("report.html", &ctx)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
-    // Write out
     fs::write(out_path, rendered)
 }
+
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
@@ -247,7 +276,8 @@ fn main() -> io::Result<()> {
         extract_dates_from_template(&args.template)
     };
 
-    let mut all: HashMap<String, Vec<FileInfo>> = HashMap::new();
+    // normalized_rel_path -> vec<FileInfo>
+    let mut grouped_by_norm_rel: HashMap<String, Vec<FileInfo>> = HashMap::new();
 
     for date in &dates {
         let path = resolve_template(&args.template, *date);
@@ -255,33 +285,29 @@ fn main() -> io::Result<()> {
             eprintln!("Skipping missing path: {:?}", path);
             continue;
         }
-        let files = collect_files(&path, *date);
-        for (norm_name, info) in files {
-            all.entry(norm_name).or_default().push(info);
+        for info in collect_files(&path, *date) {
+            grouped_by_norm_rel
+                .entry(info.normalized_rel_path.clone())
+                .or_default()
+                .push(info);
         }
     }
 
-    let enc_label = args.encoding
-        .as_deref()
-        .unwrap_or("utf8")
-        .to_lowercase();
-
+    // CSV output (same as before, but using the new grouping)
+    let enc_label = args.encoding.as_deref().unwrap_or("utf8").to_lowercase();
     let mut writer: Box<dyn Write> = match enc_label.as_str() {
         "shift_jis" => {
-            // SHIFT_JIS encoding
             let stdout = io::stdout();
             let handle = stdout.lock();
             Box::new(EncodingWriter::new(handle, SHIFT_JIS.new_encoder()))
         }
         "utf16le" => {
-            // UTF-16LE encoding
             let encoder = UTF_16LE.new_encoder();
             let stdout = io::stdout();
             let handle = stdout.lock();
             Box::new(EncodingWriter::new(handle, encoder))
         }
         _ => {
-            // UTF-8 (no wrapper)
             let stdout = io::stdout();
             Box::new(stdout.lock())
         }
@@ -289,33 +315,32 @@ fn main() -> io::Result<()> {
 
     writeln!(
         writer,
-        "normalized_name,date,actual_name,size,created,modified"
+        "normalized_rel_path,date,actual_name,size,created,modified,rel_path"
     )?;
 
-    for (norm_name, infos) in &all {
+    for (norm_rel, infos) in &grouped_by_norm_rel {
         for info in infos {
             writeln!(
                 writer,
-                "{},{},{},{},{},{}",
-                norm_name,
+                "{},{},{},{},{},{},{}",
+                norm_rel,
                 info.date_str,
                 info.actual_name,
                 info.size,
                 info.created,
-                info.modified
+                info.modified,
+                info.rel_path
             )?;
         }
     }
     writer.flush()?;
 
-    use std::io::Write;
-    // Convert HashMap -> BTreeMap to get stable ordering in HTML
+    // stable ordering for HTML
     let grouped: BTreeMap<String, Vec<FileInfo>> =
-        all.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        grouped_by_norm_rel.into_iter().collect();
 
     let html_path = PathBuf::from("output.html");
     write_html_report_with_tera(&html_path, &grouped)?;
 
     Ok(())
-
 }
