@@ -8,8 +8,21 @@
   <style>
     body { font-family: sans-serif; padding: 2em; }
     h2 { margin-top: 2em; }
-    .row { display: flex; gap: 2em; margin-bottom: 4em; }
-    canvas { max-width: 480px; height: 300px; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2em;
+      margin-bottom: 4em;
+    }
+    .chart-container {
+      width: 480px;
+      aspect-ratio: 4 / 3;
+      flex-shrink: 0;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+    }
   </style>
 </head>
 <body>
@@ -18,8 +31,12 @@
 {% for file in files %}
   <h2>{{ file.name }}</h2>
   <div class="row">
-    <canvas id="chart_size_{{ file.id }}"></canvas>
-    <canvas id="chart_time_{{ file.id }}"></canvas>
+    <div class="chart-container">
+      <canvas id="chart_size_{{ file.id }}"></canvas>
+    </div>
+    <div class="chart-container">
+      <canvas id="chart_time_{{ file.id }}"></canvas>
+    </div>
   </div>
   <script>
   new Chart(document.getElementById("chart_size_{{ file.id }}").getContext("2d"), {
@@ -35,6 +52,7 @@
     },
     options: {
       responsive: true,
+      maintainAspectRatio: true,
       plugins: { title: { display: true, text: "Size" } },
       scales: {
         x: { title: { display: true, text: "Date" } },
