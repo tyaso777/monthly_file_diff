@@ -75,7 +75,7 @@
       datasets: [
         {
           label: "created",
-          data: {{ file.created_json | safe }},
+          data: createdData_{{ file.id }},
           borderColor: "green",
           borderDash: [4, 2],
           pointStyle: "circle",
@@ -84,7 +84,7 @@
         },
         {
           label: "modified",
-          data: {{ file.modified_json | safe }},
+          data: modifiedData_{{ file.id }},
           borderColor: "orange",
           borderDash: [],
           pointStyle: "triangle",
