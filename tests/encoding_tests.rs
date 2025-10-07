@@ -14,7 +14,7 @@ fn test_csv_output_format() {
     
     let aug_dir = fixture.path().join("参照2024_08月データ/Main");
     let date = NaiveDate::from_ymd_opt(2024, 8, 1).unwrap();
-    let files = collect_files(&aug_dir, date, 3);
+    let files = collect_files(&aug_dir, date, 3, true);
     
     assert!(!files.is_empty());
     

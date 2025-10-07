@@ -12,6 +12,7 @@
 * CSV出力のエンコーディングを `utf8`（デフォルト）、`shift_jis`、`utf16le` から選択可能
 * HTML形式のグラフ付きレポート出力に対応（Teraテンプレートエンジン使用）
 * サブフォルダの最大探索深さを調整可能
+* ファイル名に含まれる年月の自動検出を切り替え可能（`--detect-filename-dates`）
 
 ## 前提条件
 
@@ -59,6 +60,11 @@ cargo build --release
 .\target\release\monthly_file_diff.exe `
   --template "..." `
   --max-depth 3 > output.csv
+
+# 7) ファイル名の年月自動検出を無効化
+.\target\release\monthly_file_diff.exe `
+  --template "D:\data\参照{yyyy}_{mm}月データ\Main" `
+  --detect-filename-dates false > output.csv
 ```
 
 ## コマンドライン引数
@@ -70,6 +76,7 @@ cargo build --release
 | `-e, --encoding <ENC>`      | 出力CSVのエンコーディング。`utf8`（デフォルト）、`shift_jis`、`utf16le` のいずれか |
 | `--html-file <PATH>`        | HTMLレポート出力ファイル名。空文字列の場合はCSV出力のみ                           |
 | `--max-depth <N>`           | サブディレクトリの最大探索深さ（デフォルト: 2）                                |
+| `--detect-filename-dates <BOOL>` | ファイル名に含まれる年月の自動置換を行うかどうか（デフォルト: `true`）。番号付きファイルをそのまま扱いたい場合は `false` を指定 |
 
 
 ## サンプルCSV出力

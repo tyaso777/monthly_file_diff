@@ -40,6 +40,10 @@ struct Args {
     /// Output HTML file path (default: output.html)
     #[arg(long, default_value = "")]
     html_file: String,
+
+    /// Whether to auto-detect yyyy/mm patterns in file names (default: true)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    detect_filename_dates: bool,
 }
 
 
@@ -136,7 +140,12 @@ fn main() -> io::Result<()> {
             eprintln!("Skipping missing path: {:?}", path);
             continue;
         }
-        for info in collect_files(&path, *date, args.max_depth) {
+        for info in collect_files(
+            &path,
+            *date,
+            args.max_depth,
+            args.detect_filename_dates,
+        ) {
             grouped_by_norm_rel
                 .entry(info.normalized_rel_path.clone())
                 .or_default()

@@ -54,7 +54,7 @@ fn test_collect_files_integration() {
     let aug_main_dir = base_path.join("参照2024_08月データ").join("Main");
     let date = NaiveDate::from_ymd_opt(2024, 8, 1).unwrap();
     
-    let files = collect_files(&aug_main_dir, date, 3);
+    let files = collect_files(&aug_main_dir, date, 3, true);
     
     // Should find 2 files (root + subdirectory)
     assert_eq!(files.len(), 2);
@@ -67,6 +67,24 @@ fn test_collect_files_integration() {
     let pdf_file = files.iter().find(|f| f.actual_name.contains("Report")).unwrap();
     assert_eq!(pdf_file.normalized_rel_path, "Sub/Report{mm}-{yyyy}.pdf");
     assert_eq!(pdf_file.rel_path, "Sub/Report08-2024.pdf");
+}
+
+#[test]
+fn test_collect_files_without_filename_detection() {
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    let target_dir = base_path.join("Main");
+    fs::create_dir_all(&target_dir).unwrap();
+    fs::write(target_dir.join("report_01_summary.xlsx"), b"dummy").unwrap();
+
+    let date = NaiveDate::from_ymd_opt(2024, 8, 1).unwrap();
+    let files = collect_files(&target_dir, date, 2, false);
+
+    assert_eq!(files.len(), 1);
+    let info = &files[0];
+    assert_eq!(info.rel_path, "report_01_summary.xlsx");
+    assert_eq!(info.normalized_rel_path, "report_01_summary.xlsx");
 }
 
 #[test]
@@ -89,16 +107,16 @@ fn test_collect_files_max_depth() {
     let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
     
     // Test max_depth = 1 (should only find root_file.txt)
-    let files_depth1 = collect_files(&test_dir, date, 1);
+    let files_depth1 = collect_files(&test_dir, date, 1, true);
     assert_eq!(files_depth1.len(), 1);
     assert_eq!(files_depth1[0].actual_name, "root_file.txt");
     
     // Test max_depth = 2 (should find root + level1)
-    let files_depth2 = collect_files(&test_dir, date, 2);
+    let files_depth2 = collect_files(&test_dir, date, 2, true);
     assert_eq!(files_depth2.len(), 2);
     
     // Test max_depth = 3 (should find all files)
-    let files_depth3 = collect_files(&test_dir, date, 3);
+    let files_depth3 = collect_files(&test_dir, date, 3, true);
     assert_eq!(files_depth3.len(), 3);
 }
 
@@ -175,7 +193,7 @@ fn test_full_workflow_integration() {
     for date in dates {
         let resolved_path = resolve_template(&template, date);
         if resolved_path.exists() {
-            let files = collect_files(&resolved_path, date, 3);
+            let files = collect_files(&resolved_path, date, 3, true);
             all_files.extend(files);
         }
     }
@@ -204,7 +222,7 @@ fn test_file_metadata_collection() {
     fs::write(&test_file, b"test content for metadata").unwrap();
     
     let date = NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
-    let files = collect_files(&test_dir, date, 2);
+    let files = collect_files(&test_dir, date, 2, true);
     
     assert_eq!(files.len(), 1);
     let file_info = &files[0];
@@ -227,7 +245,7 @@ fn test_empty_directory() {
     fs::create_dir_all(&empty_dir).unwrap();
     
     let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let files = collect_files(&empty_dir, date, 2);
+    let files = collect_files(&empty_dir, date, 2, true);
     
     assert_eq!(files.len(), 0);
 }
@@ -238,7 +256,7 @@ fn test_nonexistent_directory() {
     let nonexistent = temp_dir.path().join("does_not_exist");
     
     let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let files = collect_files(&nonexistent, date, 2);
+    let files = collect_files(&nonexistent, date, 2, true);
     
     // Should handle gracefully and return empty vec
     assert_eq!(files.len(), 0);

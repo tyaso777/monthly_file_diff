@@ -54,7 +54,12 @@ pub fn normalize_rel_path(rel_path: &str, yyyy: i32, mm: u32) -> String {
     }
 }
 
-pub fn collect_files(root: &Path, date: NaiveDate, max_depth: usize) -> Vec<FileInfo> {
+pub fn collect_files(
+    root: &Path,
+    date: NaiveDate,
+    max_depth: usize,
+    detect_filename_dates: bool,
+) -> Vec<FileInfo> {
     let mut out = Vec::new();
 
     for entry in WalkDir::new(root)
@@ -100,7 +105,11 @@ pub fn collect_files(root: &Path, date: NaiveDate, max_depth: usize) -> Vec<File
             .unwrap_or_else(|_| "N/A".into());
 
         let file_name = entry.file_name().to_string_lossy().to_string();
-        let normalized_rel_path = normalize_rel_path(&rel_path, date.year(), date.month());
+        let normalized_rel_path = if detect_filename_dates {
+            normalize_rel_path(&rel_path, date.year(), date.month())
+        } else {
+            rel_path.clone()
+        };
 
         out.push(FileInfo {
             actual_name: file_name,
